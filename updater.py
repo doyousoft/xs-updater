@@ -66,6 +66,7 @@ if __name__ == "__main__":
     print( colored ("Connected on %s running %s (%s)" % ( currentHost['hostname'], currentHost['software_version']['product_brand'], currentHost['software_version']['product_version'] ) , 'blue' ) )
 
     # Fetch all patch on the pool
+    # FIXME: handle patch unapplied on some host ?
     patches = session.xenapi.pool_patch.get_all_records ()
     appliedPatches = set ()
 
@@ -111,7 +112,6 @@ if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as dirpath:
 
         # FIXME: use threading to optimize download/upload process
-
         for patch in sorted(patches.keys()):
             cp = patches[ patch ]
             patchName = cp[ 'name' ]
@@ -138,6 +138,7 @@ if __name__ == "__main__":
                             wf.write( rf.read() )
 
             # Read file and pipe thru XS API
+            # FIXME: some disk checks would be quite usefull
             print( colored( "  Uploading patch to XenAPI", "green" ) )
             task = session.xenapi.task.create( "import "+patchName+".xsupdate", "" )
 
@@ -152,6 +153,7 @@ if __name__ == "__main__":
                 http.client.HTTPConnection._http_vsn = 10
                 http.client.HTTPConnection._http_vsn_str = 'HTTP/1.0'
 
+                # FIXME: an upload progress bar would be quite usefull ...
                 response = requests.put(put_url, data=rf, headers={'Connection': None} )
 
                 http.client.HTTPConnection._http_vsn = 11
@@ -172,8 +174,9 @@ if __name__ == "__main__":
                 print( colored( "   Post install: %s" % session.xenapi.pool_patch.get_after_apply_guidance( result ), "blue" ) )
                 #time.sleep(400)
 
+    # FIXME: Disabled for now, need testing
     if ( 0 == 1 ) :
-
+        
         print ( colored ( "Post upgrade step: reboot hosts", "blue" ) )
 
         print ( colored ( "Reboot management node", "green" ) )
