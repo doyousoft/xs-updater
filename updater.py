@@ -26,6 +26,8 @@ import tempfile
 import XenAPI
 import os
 
+from termcolor import colored
+
 from tqdm import tqdm
 from zipfile import ZipFile
 from pathlib import Path
@@ -36,10 +38,10 @@ from lxml import etree
 storedUpdatesPath = os.environ['HOME']+"/Downloads/"
 
 if __name__ == "__main__":
-    if len(sys.argv) != 4:
-        print ("Usage:")
-        print (sys.argv[0], " <url> <username> <password>")
-        sys.exit(1)
+    if len( sys.argv ) != 4:
+        print( "Usage:" )
+        print( sys.argv[0], " <url> <username> <password>" )
+        sys.exit( 1 )
 
     url = sys.argv[1]
     username = sys.argv[2]
@@ -47,20 +49,21 @@ if __name__ == "__main__":
 
     try:
         # First acquire a valid session by logging in:
-        session = XenAPI.Session(url)
-        session.xenapi.login_with_password(username, password)
+        session = XenAPI.Session( url )
+        session.xenapi.login_with_password( username, password )
     except XenAPI.Failure as e:
         if e.details[0]=='HOST_IS_SLAVE':
+            print( colored( "**Reconnecting to MASTER host: %s" % e.details[1], 'yellow' ) )
             url = 'https://'+e.details[1]
-            session=XenAPI.Session(url)
-            session.login_with_password(username, password)
+            session=XenAPI.Session( url )
+            session.login_with_password( username, password )
         else:
             raise
 
     # Management details:
     xapiSession = session.xenapi.session.get_record( session._session )
     currentHost = session.xenapi.host.get_record( xapiSession['this_host'] )
-    print( "Connected on ",currentHost['hostname']," running ", currentHost['software_version']['product_brand'], currentHost['software_version']['product_version'] )
+    print( colored ("Connected on %s running %s (%s)" % ( currentHost['hostname'], currentHost['software_version']['product_brand'], currentHost['software_version']['product_version'] ) , 'blue' ) )
 
     # Fetch all patch on the pool
     patches = session.xenapi.pool_patch.get_all_records ()
@@ -69,7 +72,7 @@ if __name__ == "__main__":
     for patch in patches:
         appliedPatches.add(patches[patch]['uuid'])
 
-    print( "Fetching XenServer Update repository" )
+    print( colored( "Fetching XenServer Update repository", 'green') )
     xsUpdates = requests.get( "http://updates.xensource.com/XenServer/updates.xml" )
 
     # Use a progress download ? need a byte=>str conversion
@@ -87,8 +90,6 @@ if __name__ == "__main__":
 
     # Extraction des nouveaux patches depuis le repository:
     for version in xsuTree.xpath( pathStr ):
-
-        print( "Version %s" % version.get("name") )
 
         for patch in version.findall( "patch" ):
 
@@ -115,34 +116,34 @@ if __name__ == "__main__":
             cp = patches[ patch ]
             patchName = cp[ 'name' ]
 
-            print( "Patch: %s" % cp[ "uuid" ] )
-            print( "  %s ( %s ) " % (cp[ "name" ], cp[ "description" ] ) )
+            print( colored( "Patch: %s" % cp[ "uuid" ], 'green' ) )
+            print( colored( "  %s ( %s ) " % (cp[ "name" ], cp[ "description" ]), "blue" ) )
 
-            if Path(storedUpdatesPath+"/"+patchName+".xsupdate").is_file() == False:
+            if Path( storedUpdatesPath+"/"+patchName+".xsupdate" ).is_file() == False:
                 # Patch not available in local cache, downloading
 
-                reqPatch = requests.get (patches[patch]['url'], stream=True)
+                reqPatch = requests.get( patches[patch]['url'], stream=True )
 
-                print ("  Downloading "+patches[patch]['url']+': %.3f' % (int(reqPatch.headers['Content-Length'])/1024/1024)+"Mo")
+                print( colored( "  Downloading "+patches[patch]['url']+': %.3f' % (int(reqPatch.headers['Content-Length'])/1024/1024)+"Mo", "green" ) )
 
                 with open(dirpath+'/'+patchName+'.zip', 'wb') as f:
-                    for data in tqdm(reqPatch.iter_content(), unit='B', total=int(reqPatch.headers['Content-Length']), unit_scale=True):
-                        f.write(data)
+                    for data in tqdm( reqPatch.iter_content(), unit='B', total=int( reqPatch.headers['Content-Length'] ), unit_scale=True):
+                        f.write( data )
 
-                print ("  Extracting main content")
+                print ( colored( "  Extracting main content", "green" ) )
                 with ZipFile(dirpath+'/'+patchName+'.zip', 'r') as myzip:
                     with myzip.open (patchName+".xsupdate") as rf:
-                        print ("   saving into "+storedUpdatesPath+"/"+patchName+".xsupdate")
-                        with open(storedUpdatesPath+"/"+patchName+".xsupdate","wb") as wf:
-                            wf.write ( rf.read () )
+                        print( "   saving into "+storedUpdatesPath+"/"+patchName+".xsupdate")
+                        with open( storedUpdatesPath+"/"+patchName+".xsupdate","wb" ) as wf:
+                            wf.write( rf.read() )
 
             # Read file and pipe thru XS API
-            print ("  Uploading patch to XenAPI")
-            task = session.xenapi.task.create("import "+patchName+".xsupdate", "")
+            print( colored( "  Uploading patch to XenAPI", "green" ) )
+            task = session.xenapi.task.create( "import "+patchName+".xsupdate", "" )
 
             with open(storedUpdatesPath+"/"+patchName+".xsupdate","rb") as rf:
                 put_url = "%s/pool_patch_upload?session_id=%s&task_id=%s" % (url, session._session, task)
-                print ("Upload to %s" % put_url )
+                print( colored( "Upload to %s" % put_url, "yellow" ) )
 
                 # Ugly Hack to downgrade to HTTP/1.0
                 #  XenAPI doesn't react correctly to PUT in HTTP/1.1:
@@ -159,42 +160,43 @@ if __name__ == "__main__":
                 finished = False
                 while not finished:
                     finished = (session.xenapi.task.get_status (task) == "success")
-                    print ("   Patch upload processing status: %s" % session.xenapi.task.get_status (task) )
+                    print( "   Patch upload processing status: %s" % session.xenapi.task.get_status( task ) )
                     time.sleep (1)
 
-                result = session.xenapi.task.get_result (task)
+                result = session.xenapi.task.get_result( task )
 
-                print ("  Applying patch:")
+                print ( colored( "  Applying patch:", "green" ) )
 
-                session.xenapi.pool_patch.pool_apply (result)
-                print ("   Post install: %s" % session.xenapi.pool_patch.get_after_apply_guidance (result) )
+                session.xenapi.pool_patch.pool_apply( result )
+
+                print( colored( "   Post install: %s" % session.xenapi.pool_patch.get_after_apply_guidance( result ), "blue" ) )
                 #time.sleep(400)
 
-    print ("Done")
+    if ( 0 == 1 ) :
 
-    print ("Post upgrade step: reboot hosts")
+        print ( colored ( "Post upgrade step: reboot hosts", "blue" ) )
 
-    print ("Reboot management node")
+        print ( colored ( "Reboot management node", "green" ) )
 
-    print ("Evacuate host")
-    session.xenapi.host.evacuate (xapiSession['this_host'])
+        print ( colored ( "Evacuate host ?", "green" ) )
+        #session.xenapi.host.evacuate( xapiSession['this_host'] )
 
-    print ("VMs running on %s:" % session.xenapi.host.get_name_label(xapiSession['this_host']) )
+        print ( colored ( "VMs running on %s:" % session.xenapi.host.get_name_label( xapiSession['this_host'] ), "blue" ) )
 
-    for vm in session.xenapi.host.get_resident_VMs (xapiSession['this_host']):
-        print (" %s" % session.xenapi.VM.get_name_label (vm) )
+        for vm in session.xenapi.host.get_resident_VMs( xapiSession['this_host'] ):
+            print( colored( " %s" % session.xenapi.VM.get_name_label( vm ), "blue" ) )
 
 
-    hosts = session.xenapi.host.get_all()
+        hosts = session.xenapi.host.get_all()
 
-    for x in hosts:
-        if (x == xapiSession['this_host']):
-            print ("Management node")
-            next
+        for x in hosts:
+            if ( x == xapiSession['this_host'] ):
+                print( "Management node, skipping" )
+                next
 
-        print ("VMs running on %s:" % session.xenapi.host.get_name_label(x) )
+            print( "VMs running on %s:" % session.xenapi.host.get_name_label( x ) )
 
-        for vm in session.xenapi.host.get_resident_VMs (x):
-            print (" %s" % session.xenapi.VM.get_name_label (vm) )
+            for vm in session.xenapi.host.get_resident_VMs( x ):
+                print (" %s" % session.xenapi.VM.get_name_label( vm ) )
 
     session.xenapi.session.logout()
