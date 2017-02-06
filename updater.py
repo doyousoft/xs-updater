@@ -126,9 +126,11 @@ if __name__ == "__main__":
 
                 print( colored( "  Downloading "+patches[patch]['url']+': %.3f' % (int(reqPatch.headers['Content-Length'])/1024/1024)+"Mo", "green" ) )
 
-                with open(dirpath+'/'+patchName+'.zip', 'wb') as f:
-                    for data in tqdm( reqPatch.iter_content(), unit='B', total=int( reqPatch.headers['Content-Length'] ), unit_scale=True):
-                        f.write( data )
+                with open ( dirpath+'/'+patchName+'.zip', 'wb' ) as f:
+                    pbar = tqdm ( unit='B', total=int( reqPatch.headers['Content-Length'] ) , unit_scale=True)
+                    for data in reqPatch . iter_content( 1024 ):
+                        pbar . update ( len (data) )
+                        f . write( data )
 
                 print ( colored( "  Extracting main content", "green" ) )
                 with ZipFile(dirpath+'/'+patchName+'.zip', 'r') as myzip:
