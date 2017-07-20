@@ -34,6 +34,8 @@ from pathlib import Path
 from pprint import pprint
 from lxml import etree
 
+from pprint import pprint
+
 # FIXME:
 storedUpdatesPath = os.environ['HOME']+"/Downloads/"
 
@@ -63,11 +65,30 @@ if __name__ == "__main__":
     # Management details:
     xapiSession = session.xenapi.session.get_record( session._session )
     currentHost = session.xenapi.host.get_record( xapiSession['this_host'] )
+    
     print( colored ("Connected on %s running %s (%s)" % ( currentHost['hostname'], currentHost['software_version']['product_brand'], currentHost['software_version']['product_version'] ) , 'blue' ) )
+    
+    lVer = currentHost['software_version']['product_version'] . split (".")
+
+    patchMode = True
+    patchExt = ".xsupdate"
+    pathStr = "/patchdata/serverversions/version[@build-number='"+currentHost['software_version']['build_number']+"']"
+    if int(lVer[0]) >= 7 and int(lVer[1]) >= 1:
+        # At version 7.1 there seem to be a few changes in patch system
+
+        # Search within XML by version string instead of build-number who changed format in 7.2 and isn't populated in the XML
+        pathStr = "/patchdata/serverversions/version[@value='"+currentHost['software_version']['product_version']+"']"
+
+        # The latest XenServer use a new "update" mechanism with iso images files and new commands 
+        patchExt = ".iso"
+        patchMode = False
 
     # Fetch all patch on the pool
     # FIXME: handle patch unapplied on some host ?
-    patches = session.xenapi.pool_patch.get_all_records ()
+    if patchMode:
+        patches = session.xenapi.pool_patch.get_all_records ()
+    else:
+        patches = session.xenapi.pool_update.get_all_records ()
     appliedPatches = set ()
 
     for patch in patches:
@@ -87,7 +108,6 @@ if __name__ == "__main__":
         xsuTree = etree.XML( xsUpdates.text )
 
     patches = dict ()
-    pathStr = "/patchdata/serverversions/version[@build-number='"+currentHost['software_version']['build_number']+"']"
 
     # Extraction des nouveaux patches depuis le repository:
     for version in xsuTree.xpath( pathStr ):
@@ -101,13 +121,13 @@ if __name__ == "__main__":
                 sys.exit( -1 )
             else:
                 if( patch.get( "uuid" ) not in appliedPatches):
-
                     patches[ detPatch[0].get( "name-label" ) ] = {
                         'name': detPatch[0].get( "name-label" ),
                         'description': detPatch[0].get( "name-description" ),
                         'url': detPatch[0].get( 'patch-url' ),
                         'uuid' : detPatch[0].get( 'uuid' )
                     }
+                    print( colored( " Patch %s (%s) missing on the pool" %( patches[ detPatch[0].get( "name-label") ]['name'], patches[ detPatch[0].get( "name-label") ]['description'] ), 'white'))
 
     with tempfile.TemporaryDirectory() as dirpath:
 
@@ -119,7 +139,7 @@ if __name__ == "__main__":
             print( colored( "Patch: %s" % cp[ "uuid" ], 'green' ) )
             print( colored( "  %s ( %s ) " % (cp[ "name" ], cp[ "description" ]), "blue" ) )
 
-            if Path( storedUpdatesPath+"/"+patchName+".xsupdate" ).is_file() == False:
+            if Path( storedUpdatesPath+"/"+patchName+patchExt ).is_file() == False:
                 # Patch not available in local cache, downloading
 
                 reqPatch = requests.get( patches[patch]['url'], stream=True )
@@ -127,24 +147,24 @@ if __name__ == "__main__":
                 print( colored( "  Downloading "+patches[patch]['url']+': %.3f' % (int(reqPatch.headers['Content-Length'])/1024/1024)+"Mo", "green" ) )
 
                 with open ( dirpath+'/'+patchName+'.zip', 'wb' ) as f:
-                    pbar = tqdm ( unit='B', total=int( reqPatch.headers['Content-Length'] ) , unit_scale=True)
+                    pbar = tqdm ( unit='B', total=int( reqPatch.headers['Content-Length'] ), maxinterval=10*1024, unit_scale=True)
                     for data in reqPatch . iter_content( 1024 ):
                         pbar . update ( len (data) )
                         f . write( data )
 
                 print ( colored( "  Extracting main content", "green" ) )
                 with ZipFile(dirpath+'/'+patchName+'.zip', 'r') as myzip:
-                    with myzip.open (patchName+".xsupdate") as rf:
-                        print( "   saving into "+storedUpdatesPath+"/"+patchName+".xsupdate")
-                        with open( storedUpdatesPath+"/"+patchName+".xsupdate","wb" ) as wf:
+                    with myzip.open (patchName+patchExt) as rf:
+                        print( "   saving into "+storedUpdatesPath+"/"+patchName+patchExt)
+                        with open( storedUpdatesPath+"/"+patchName+patchExt,"wb" ) as wf:
                             wf.write( rf.read() )
 
             # Read file and pipe thru XS API
             # FIXME: some disk checks would be quite usefull
             print( colored( "  Uploading patch to XenAPI", "green" ) )
-            task = session.xenapi.task.create( "import "+patchName+".xsupdate", "" )
+            task = session.xenapi.task.create( "import "+patchName+patchExt, "" )
 
-            with open(storedUpdatesPath+"/"+patchName+".xsupdate","rb") as rf:
+            with open(storedUpdatesPath+"/"+patchName+patchExt,"rb") as rf:
                 put_url = "%s/pool_patch_upload?session_id=%s&task_id=%s" % (url, session._session, task)
                 print( colored( "Upload to %s" % put_url, "yellow" ) )
 
@@ -171,7 +191,10 @@ if __name__ == "__main__":
 
                 print ( colored( "  Applying patch:", "green" ) )
 
-                session.xenapi.pool_patch.pool_apply( result )
+                if patchMode:
+                    session.xenapi.pool_patch.pool_apply( result )
+                else:
+                    session.xenapi.pool_update.pool_apply( result )
 
                 print( colored( "   Post install: %s" % session.xenapi.pool_patch.get_after_apply_guidance( result ), "blue" ) )
                 #time.sleep(400)
